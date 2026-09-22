@@ -1,0 +1,60 @@
+plugins { id 'com.android.application' }
+
+def localProps = new Properties()
+def localPropsFile = rootProject.file('local.properties')
+if (localPropsFile.exists()) {
+    localPropsFile.withInputStream { localProps.load(it) }
+}
+def bootstrapSecret = localProps.getProperty('trelay.bootstrapSecret', System.getenv('TRELAY_BOOTSTRAP_SECRET') ?: '')
+def quotedBootstrapSecret = '"' + bootstrapSecret.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+dependencies {
+    implementation files('libs/libv2ray.aar')
+    implementation files('libs/snakeyaml-2.0.jar')
+}
+
+android {
+    namespace 'com.trelay.android'
+    compileSdk {
+        version = release(36) {
+            minorApiLevel = 1
+        }
+    }
+    buildToolsVersion '36.0.0'
+
+    defaultConfig {
+        applicationId 'com.trelay.android'
+        minSdk 29
+        targetSdk 35
+        versionCode 3
+        versionName '0.3-beta'
+        buildConfigField 'String', 'TRELAY_BOOTSTRAP_SECRET', quotedBootstrapSecret
+    }
+
+    buildFeatures { buildConfig true }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs { useLegacyPackaging true }
+        resources { excludes += ['META-INF/versions/9/module-info.class'] }
+    }
+
+    // Public beta release targets current ARM64 phones only.
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a'
+            universalApk false
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}

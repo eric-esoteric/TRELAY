@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- TRELAY wears the mark the other way round from TLINE: dark knot on light. -->
+    <color name="ic_launcher_background">#F2F4F7</color>
+</resources>

@@ -1,0 +1,40 @@
+# Local tools and IDE state
+.tools/
+.idea/
+*.iml
+
+# Local configuration and secrets
+local.properties
+**/local.properties
+*.jks
+*.keystore
+signing.properties
+**/signing.properties
+
+# Android build state
+**/.gradle/
+**/.gradle-user/
+**/.android/
+**/.toolchain/
+**/build/
+android/outputs/
+
+# Local release artifacts (published through GitHub Releases)
+artifacts/
+
+# Windows build and runtime state
+windows/**/bin/
+windows/**/obj/
+windows/dist/
+windows/package/
+windows/engine/app-config.json
+windows/engine/logs/
+windows/src/TRELAY/BuildSecrets.local.cs
+*.log
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.user
+*.suo

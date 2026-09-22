@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="TrelayTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#E48950</item>
+        <item name="android:colorControlActivated">#E48950</item>
+        <item name="android:statusBarColor">#171920</item>
+        <item name="android:navigationBarColor">#171920</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#171920</item>
+        <item name="android:alertDialogTheme">@style/TrelayAlertTheme</item>
+    </style>
+    <style name="TrelayAlertTheme" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#E48950</item>
+        <item name="android:colorBackground">#20232B</item>
+        <item name="android:colorControlActivated">#E48950</item>
+    </style>
+    <style name="TrelayDialogTheme" parent="android:style/Theme.Material.Dialog.NoActionBar">
+        <item name="android:colorAccent">#E48950</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowCloseOnTouchOutside">false</item>
+        <item name="android:alertDialogTheme">@style/TrelayAlertTheme</item>
+    </style>
+</resources>

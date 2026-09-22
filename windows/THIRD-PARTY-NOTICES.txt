@@ -1,0 +1,40 @@
+TRELAY Beta 0.3 — third-party notices
+
+SSH.NET 2024.1.0
+Copyright (c) 2010-2024 Renci and contributors
+License: MIT
+Project: https://github.com/sshnet/SSH.NET
+
+Microsoft.Bcl.AsyncInterfaces 1.0.0
+Copyright (c) Microsoft Corporation
+License: MIT
+Project: https://www.nuget.org/packages/Microsoft.Bcl.AsyncInterfaces/1.0.0
+
+ProxiFyre 2.6.0
+Copyright (c) wiresock/NT KERNEL contributors
+License: GNU Affero General Public License 3.0 (AGPL-3.0)
+Project and corresponding source: https://github.com/wiresock/proxifyre/tree/v2.6.0
+The complete license text is included as engine/LICENSE-PROXIFYRE.txt.
+Bundled x64 setup SHA256: 78947cc358375121092c72d5c19b01224e3114f1519f78271f60cdce265907d2
+
+Xray-core 26.3.27
+Copyright (c) 2019-2026 XTLS contributors
+License: Mozilla Public License 2.0 (MPL-2.0)
+Project: https://github.com/XTLS/Xray-core
+The complete license text is included as engine/LICENSE-XRAY.txt.
+
+Mihomo 1.19.30
+Copyright (c) MetaCubeX contributors
+License: GNU General Public License 3.0 (GPL-3.0)
+Project and corresponding source: https://github.com/MetaCubeX/mihomo/tree/v1.19.30
+The complete license text is included as engine/LICENSE-MIHOMO.txt.
+Bundled windows-amd64-compatible archive SHA256: 289fde5e29d37a5b3326480590d8b3551c5bf7f8737290355c19bce74d57a563
+Bundled mihomo.exe SHA256: 6ac25fcb26afe8e1bea24b6e6e80805bf884a33232d12e2d78dfa0b6c529ac14
+
+YamlDotNet 18.1.0
+Copyright (c) Antoine Aubry and contributors
+License: MIT
+Project: https://github.com/aaubry/YamlDotNet/tree/v18.1.0
+The complete license text is included as LICENSE-YAMLDOTNET.txt.
+Official NuGet package SHA256: 59ffe65ade67ad9d886267f877b634a450363cb81b94e19db9ca4c36461416f6
+Bundled YamlDotNet.dll SHA256: 9c0ee9ec903a44f94e84369c1a961d8b16612a53837843559160a299aa58fd57

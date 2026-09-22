@@ -1,0 +1,15 @@
+{
+  "id": "megafon-communicator",
+  "displayName": "MegaFon",
+  "countries": ["RU"],
+  "processNames": ["Communicator"],
+  "domainPatterns": ["(^|\\.)megapbx\\.ru$"],
+  "ipRanges": [],
+  "tcpPorts": ["443"],
+  "udpPorts": [],
+  "logPaths": ["%TEMP%\\Communicator\\pbxc_debug.log"],
+  "endpointPatterns": ["\\b[a-z0-9-]+\\.megapbx\\.ru\\b"],
+  "successPatterns": ["ws addr="],
+  "failurePatterns": ["connect exception", "websocket: netexception", "connection reset"],
+  "documentationUrls": ["https://vats.megafon.ru/ip_restrictions"]
+}
