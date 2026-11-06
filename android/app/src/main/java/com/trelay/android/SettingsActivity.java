@@ -2,6 +2,7 @@ package com.trelay.android;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.AlarmManager;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.net.Uri;
@@ -76,6 +77,9 @@ public final class SettingsActivity extends Activity {
         TextView alwaysHint = Ui.text(this, "Надёжнее всего включить «Постоянный VPN» для TRELAY в системных настройках. Не включай «Блокировать соединения без VPN»: в VPN входят только выбранные приложения, остальные тогда потеряют сеть. Строгий «Частный DNS» (конкретный хост) тоже отключи — DNS приложений маршрутов TRELAY отправляет через туннель сам.", 12, Ui.MUTED, false);
         alwaysHint.setPadding(0, Ui.dp(this, 6), 0, 0);
         startup.addView(alwaysHint);
+        TextView alarmHint = Ui.text(this, "Для перезапуска VPN после выгрузки Android может понадобиться разрешение на точные будильники. Без него TRELAY использует менее точный таймер; фоновые ограничения телефона могут помешать восстановлению.", 12, Ui.MUTED, false);
+        alarmHint.setPadding(0, Ui.dp(this, 8), 0, 0);
+        startup.addView(alarmHint);
         LinearLayout systemButtons = Ui.row(this);
         Button vpn = Ui.smallButton(this, "Настройки VPN");
         Button battery = Ui.smallButton(this, "Работа в фоне");
@@ -86,6 +90,17 @@ public final class SettingsActivity extends Activity {
         battery.setOnClickListener(v -> {
             try { startActivity(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()))); }
             catch (Exception error) { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+        });
+        Button alarms = Ui.smallButton(this, "Разрешение на точные будильники");
+        startup.addView(alarms, Ui.fill(this, 8));
+        alarms.setOnClickListener(v -> {
+            AlarmManager manager = getSystemService(AlarmManager.class);
+            if (android.os.Build.VERSION.SDK_INT < 31 || (manager != null && manager.canScheduleExactAlarms())) {
+                new AlertDialog.Builder(this).setMessage("Точные будильники уже доступны.").setPositiveButton("Понятно", null).show();
+                return;
+            }
+            try { startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + getPackageName()))); }
+            catch (Exception error) { Ui.error(this, "Не удалось открыть настройку", error); }
         });
         body.addView(startup, Ui.fill(this, 12));
 
@@ -122,6 +137,12 @@ public final class SettingsActivity extends Activity {
         TextView aboutText = Ui.text(this, "TRELAY Android " + TrelayApp.VERSION + "\n" + XrayCore.version() + " (AndroidLibXrayLite, LGPL-3.0)\nMihomo 1.19.31 (GPL-3.0)\nSnakeYAML 2.0 (Apache-2.0)", 12, Ui.MUTED, false);
         aboutText.setPadding(0, Ui.dp(this, 6), 0, 0);
         about.addView(aboutText);
+        Button privacy = Ui.smallButton(this, "Политика конфиденциальности");
+        about.addView(privacy, Ui.fill(this, 10));
+        privacy.setOnClickListener(v -> {
+            try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/eric-esoteric/TRELAY/blob/main/android/PRIVACY.md"))); }
+            catch (Exception error) { Ui.error(this, "Не удалось открыть политику", error); }
+        });
         body.addView(about, Ui.fill(this, 12));
 
         Button save = Ui.button(this, "Сохранить", true);

@@ -109,7 +109,15 @@ internal sealed class TunnelEngine : IDisposable
 
 		internal volatile bool ProbesService;
 
+		internal volatile bool ServiceCheckFailed;
+
+		internal int ServiceFailures;
+
+		internal DateTime LastServiceFailureUtc = DateTime.MinValue;
+
 		internal long LastProbeRequestTicks;
+
+		internal long TraceAppFailureTicks;
 
 		internal int Priority;
 
@@ -260,8 +268,6 @@ internal sealed class TunnelEngine : IDisposable
 	private static readonly TimeSpan AppAlertQuietAfterRouterStart = TimeSpan.FromSeconds(15.0);
 
 	private static readonly TimeSpan AppAlertQuietAfterFailover = TimeSpan.FromSeconds(30.0);
-
-	private static readonly TimeSpan AppTrafficGrace = TimeSpan.FromSeconds(90.0);
 
 	private readonly object sync = new object();
 
@@ -732,6 +738,10 @@ internal sealed class TunnelEngine : IDisposable
 			select g.Key + "=" + g.Relay.Port);
 		if (text2 != proxyMapping || proxyProcess == null)
 		{
+			if (proxyProcess != null)
+			{
+				AppendLog("PROXY_RECONFIGURE reason=application-mapping-changed activeConnections=" + groups.Values.Sum((Group g) => g.Relay.TotalConnections));
+			}
 			proxyMapping = text2;
 			WriteProxiFyreConfig();
 			StopProcess(proxyProcess);
@@ -781,6 +791,7 @@ internal sealed class TunnelEngine : IDisposable
 		StringBuilder stringBuilder = new StringBuilder();
 		stringBuilder.Append(profile.ConnectionType).Append('\n').Append(profile.KeyKind)
 			.Append('\n');
+		stringBuilder.Append(profile.TelephonyOptimized).Append('\n');
 		stringBuilder.Append(UsesMihomo(profile) ? config.MihomoPath : config.XrayPath).Append('\n');
 		if (string.Equals(profile.ConnectionType, "key", StringComparison.OrdinalIgnoreCase))
 		{
@@ -905,14 +916,14 @@ internal sealed class TunnelEngine : IDisposable
 				}
 				DeleteRuntimeFile(text);
 				text = null;
-				AppendLog("BACKEND_READY name=" + SafeProfileName(profile.Name) + " port=" + num2);
+				AppendLog("BACKEND_READY name=" + SafeProfileName(profile.Name) + " port=" + num2 + " pid=" + process.Id + " engine=" + Path.GetFileName(engineLaunch.Executable));
 				HealthLoop(backend, process, token);
 				if (token.IsCancellationRequested)
 				{
 					break;
 				}
 				SetHealth(backend, Health.Down, "процесс движка завершился", wakeEngine: true);
-				AppendLog("BACKEND_EXITED name=" + SafeProfileName(profile.Name));
+				AppendLog("BACKEND_EXITED name=" + SafeProfileName(profile.Name) + " pid=" + process.Id + " exitCode=" + process.ExitCode);
 				goto IL_0237;
 			}
 			catch (OperationCanceledException)
@@ -1021,6 +1032,7 @@ internal sealed class TunnelEngine : IDisposable
 		int num = 0;
 		while (!token.IsCancellationRequested && ProcessAlive(process))
 		{
+			long appFailureTicks = Interlocked.Read(ref backend.TraceAppFailureTicks);
 			string failure;
 			bool flag = ProbeBackend(backend, num++, token, out failure);
 			if (token.IsCancellationRequested || !ProcessAlive(process))
@@ -1051,6 +1063,10 @@ internal sealed class TunnelEngine : IDisposable
 			if (token.IsCancellationRequested || !ProcessAlive(process))
 			{
 				break;
+			}
+			if (appFailureTicks != 0 && Interlocked.CompareExchange(ref backend.TraceAppFailureTicks, 0, appFailureTicks) == appFailureTicks)
+			{
+				AppendLog("APP_FAILURE_PROBE name=" + SafeProfileName(backend.Name) + " ok=" + flag + " detail=" + (flag ? "работает" : failure));
 			}
 			RecordProbe(backend, flag, failure);
 			Health health;
@@ -1440,13 +1456,38 @@ internal sealed class TunnelEngine : IDisposable
 	private bool ProbeBackend(Backend backend, int cycle, CancellationToken token, out string failure, int timeoutOverrideMs = 0)
 	{
 		List<string> list = ProbeTargets(backend);
+		int timeout = timeoutOverrideMs > 0 ? timeoutOverrideMs : (backend.IsActive ? 6000 : 8000);
+		bool serviceOk = ProbeEndpoints(backend.Target.Port, list, cycle, timeout, token, out failure);
+		if (token.IsCancellationRequested) return false;
+		bool serviceFailed = backend.ProbesService && !serviceOk;
+		bool changed;
+		lock (backend.Gate)
+		{
+			changed = backend.ServiceCheckFailed != serviceFailed;
+			backend.ServiceCheckFailed = serviceFailed;
+			backend.ServiceFailures = serviceFailed ? backend.ServiceFailures + 1 : 0;
+			if (serviceFailed) backend.LastServiceFailureUtc = DateTime.UtcNow;
+		}
+		if (changed)
+		{
+			AppendLog((serviceFailed ? "SERVICE_CHECK_FAILED" : "SERVICE_CHECK_RESTORED") + " name=" + SafeProfileName(backend.Name) + (serviceFailed ? " detail=" + failure : ""));
+			Wake();
+		}
+		if (serviceOk || !backend.ProbesService) return serviceOk;
+		// A failed destination check does not prove the VPN itself is down.
+		string serviceFailure = failure;
+		bool tunnelOk = ProbeEndpoints(backend.Target.Port, SocksHealthProbe.InternetTargets.ToList(), cycle, 4000, token, out string tunnelFailure);
+		failure = tunnelOk ? "" : "сервис: " + serviceFailure + "; контроль туннеля: " + tunnelFailure;
+		return tunnelOk;
+	}
+
+	private static bool ProbeEndpoints(int port, List<string> list, int cycle, int timeout, CancellationToken token, out string failure)
+	{
 		List<string> list2 = new List<string>();
-		for (int i = 0; i < 2; i++)
+		for (int i = 0; i < Math.Min(2, list.Count); i++)
 		{
 			list2.Add(list[(cycle + i) % list.Count]);
 		}
-		int port = backend.Target.Port;
-		int timeout = ((timeoutOverrideMs > 0) ? timeoutOverrideMs : (backend.IsActive ? 6000 : 8000));
 		failure = "нет ответа";
 		if (list2.Count == 1)
 		{
@@ -1572,7 +1613,7 @@ internal sealed class TunnelEngine : IDisposable
 			active = (group.Active = null);
 		}
 		DateTime failureStarted = ((active == null) ? DateTime.MinValue : FirstFailure(active));
-		Backend backend = candidates.FirstOrDefault((Backend b) => IsFreshHealthy(b, now) && (active == null || active.CurrentHealth != Health.Unhealthy || b == active || CheckedSince(b, failureStarted)));
+		Backend backend = candidates.Where((Backend b) => IsFreshHealthy(b, now) && (active == null || active.CurrentHealth != Health.Unhealthy || b == active || CheckedSince(b, failureStarted))).OrderBy(b => b.ServiceCheckFailed).FirstOrDefault();
 		if (active != null && HasPendingFailure(active))
 		{
 			foreach (Backend item in candidates.Where((Backend b) => b != active && IsAlive(b)))
@@ -1613,6 +1654,10 @@ internal sealed class TunnelEngine : IDisposable
 					}
 				}
 			}
+			else if (currentHealth == Health.Healthy && active.ServiceCheckFailed && active.ServiceFailures >= 2 && group.Provider != null && watcher != null && watcher.GetState(group.Provider.Id, out var _, out var _) == ProviderConnectionState.Disconnected && backend != null && backend != active && !backend.ServiceCheckFailed)
+			{
+				Failover(group, active, backend);
+			}
 			else if (currentHealth == Health.Healthy && !HasPendingFailure(active) && backend != null && backend != active && backend.Priority < active.Priority && now - group.LastFailoverUtc >= RecoveryHold && ReadyForRecovery(backend, now))
 			{
 				Recover(group, active, backend, NeverFailed(backend));
@@ -1635,7 +1680,7 @@ internal sealed class TunnelEngine : IDisposable
 				}
 			}
 		}
-		bool flag = active2 != null && active2.CurrentHealth == Health.Healthy;
+		bool flag = (active2 != null && active2.CurrentHealth == Health.Healthy) || HasApplicationConnection(group);
 		if (flag)
 		{
 			group.LostSinceUtc = DateTime.MinValue;
@@ -1676,6 +1721,11 @@ internal sealed class TunnelEngine : IDisposable
 		}
 	}
 
+	private bool HasApplicationConnection(Group group)
+	{
+		return proxyProcess != null && ProcessAlive(proxyProcess) && group.Provider != null && watcher != null && watcher.GetState(group.Provider.Id, out var _, out var _) == ProviderConnectionState.Connected && group.Candidates.Any(b => IsAlive(b) && group.Relay != null && group.Relay.ConnectionCount(b.Target) > 0);
+	}
+
 	private static bool CheckedSince(Backend backend, DateTime since)
 	{
 		lock (backend.Gate)
@@ -1696,7 +1746,7 @@ internal sealed class TunnelEngine : IDisposable
 	{
 		lock (backend.Gate)
 		{
-			if (backend.Health != Health.Healthy)
+			if (backend.Health != Health.Healthy || backend.ServiceCheckFailed || (backend.LastServiceFailureUtc != DateTime.MinValue && now - backend.LastServiceFailureUtc < RecoveryHold))
 			{
 				return false;
 			}
@@ -1768,7 +1818,7 @@ internal sealed class TunnelEngine : IDisposable
 	{
 		lock (backend.Gate)
 		{
-			return backend.LastFailureUtc == DateTime.MinValue;
+			return backend.LastFailureUtc == DateTime.MinValue && backend.LastServiceFailureUtc == DateTime.MinValue;
 		}
 	}
 
@@ -1782,7 +1832,10 @@ internal sealed class TunnelEngine : IDisposable
 		{
 			return true;
 		}
-		return group.Relay.IdleFor(backend.Target) >= AppTrafficGrace;
+		// A silent connection can be healthy (for example an idle WebSocket).
+		// Probe timeouts only redirect new connections; the live backend and app
+		// own the lifetime of established connections.
+		return false;
 	}
 
 	private void Recover(Group group, Backend from, Backend to, bool quiet)
@@ -1923,6 +1976,7 @@ internal sealed class TunnelEngine : IDisposable
 				}
 				if (value.IsActive && provider2 != null && provider2.Id.Equals(provider.Id, StringComparison.OrdinalIgnoreCase))
 				{
+					Interlocked.Exchange(ref value.TraceAppFailureTicks, DateTime.UtcNow.Ticks);
 					RequestProbe(value);
 				}
 			}
@@ -1967,7 +2021,7 @@ internal sealed class TunnelEngine : IDisposable
 			}
 			appAlerted[provider.Id] = utcNow;
 		}
-		RaiseAlert(EngineAlertKind.AppDisconnected, critical: true, provider.DisplayName + ": обрыв связи", provider.DisplayName + " потерял соединение (" + detail + ")" + (delayed ? " и не восстановил его." : ".") + " Перезайдите в приложение, не дожидаясь автоматического переподключения.");
+		RaiseAlert(EngineAlertKind.AppDisconnected, critical: true, provider.DisplayName + ": обрыв связи", provider.DisplayName + " потерял соединение (" + detail + "). Автоматическое переподключение пока не завершилось.");
 		return true;
 	}
 
@@ -1985,7 +2039,7 @@ internal sealed class TunnelEngine : IDisposable
 			string detail;
 			DateTime changedUtc;
 			ProviderConnectionState providerConnectionState = watcher.GetState(item.Id, out detail, out changedUtc);
-			if (providerConnectionState == ProviderConnectionState.Disconnected && !(changedUtc == DateTime.MinValue) && !(DateTime.UtcNow - changedUtc < TimeSpan.FromSeconds(5.0)))
+			if (providerConnectionState == ProviderConnectionState.Disconnected && !(changedUtc == DateTime.MinValue) && !(DateTime.UtcNow - changedUtc < TimeSpan.FromSeconds(30.0)))
 			{
 				DateTime dateTime = new DateTime(Interlocked.Read(ref proxyStartedTicks), DateTimeKind.Utc);
 				if (!(changedUtc < dateTime) || !(DateTime.UtcNow - dateTime < AppAlertQuietAfterRouterStart))
@@ -2048,24 +2102,25 @@ internal sealed class TunnelEngine : IDisposable
 			ProfileRuntimeStatus status = health switch
 			{
 				Health.Starting => ProfileRuntimeStatus.Starting, 
-				Health.Healthy => value.IsActive ? ProfileRuntimeStatus.Active : ProfileRuntimeStatus.Standby, 
+				Health.Healthy => value.ServiceCheckFailed ? ProfileRuntimeStatus.ServiceUnverified : (value.IsActive ? ProfileRuntimeStatus.Active : ProfileRuntimeStatus.Standby),
 				Health.Unhealthy => ProfileRuntimeStatus.Unhealthy, 
 				_ => ProfileRuntimeStatus.Down, 
 			};
 			dictionary[value.Id] = new ProfileRuntimeInfo
 			{
 				Status = status,
-				Detail = detail
+				Detail = value.ServiceCheckFailed && health == Health.Healthy ? "Туннель отвечает; проверка сервиса не прошла" : detail
 			};
 		}
 		DateTime utcNow = DateTime.UtcNow;
 		List<string> list = new List<string>();
 		bool flag = false;
 		bool flag2 = false;
+		bool degraded = false;
 		foreach (Group item in groups.Values.OrderBy((Group g) => (g.Candidates.Count != 0) ? g.Candidates.Min((Backend b) => b.Priority) : int.MaxValue))
 		{
 			Backend active = item.Active;
-			int num = item.Candidates.Count((Backend b) => b != active && b.CurrentHealth == Health.Healthy);
+			int num = item.Candidates.Count((Backend b) => b != active && b.CurrentHealth == Health.Healthy && !b.ServiceCheckFailed);
 			int num2 = item.Candidates.Count((Backend b) => b != active && b.CurrentHealth == Health.Starting);
 			if (active == null)
 			{
@@ -2085,6 +2140,12 @@ internal sealed class TunnelEngine : IDisposable
 			{
 			case Health.Healthy:
 			{
+				if (active.ServiceCheckFailed)
+				{
+					degraded = true;
+					list.Add(item.Label + (HasApplicationConnection(item) ? " подключён" : ": подключение не подтверждено") + " через «" + SafeProfileName(active.Name) + "»; туннель отвечает, проверка сервиса не прошла");
+					continue;
+				}
 				string text = ((num > 0) ? ("резерв готов: " + num) : ((num2 > 0) ? "резервы проверяются" : ((item.Candidates.Count > 1) ? "резервы недоступны" : "без резерва")));
 				list.Add(item.Label + " → «" + SafeProfileName(active.Name) + "», " + text);
 				continue;
@@ -2097,6 +2158,12 @@ internal sealed class TunnelEngine : IDisposable
 					continue;
 				}
 				break;
+			}
+			if (HasApplicationConnection(item))
+			{
+				degraded = true;
+				list.Add(item.Label + " подключён; контрольные проверки не проходят — проверяю маршрут");
+				continue;
 			}
 			flag2 = true;
 			list.Add(item.Label + ": «" + SafeProfileName(active.Name) + "» не отвечает (" + BackendDetail(active) + ")" + ((num == 0) ? ", рабочих резервов нет" : ""));
@@ -2123,6 +2190,10 @@ internal sealed class TunnelEngine : IDisposable
 		else if (flag)
 		{
 			newState = EngineState.Starting;
+		}
+		else if (degraded)
+		{
+			newState = EngineState.Degraded;
 		}
 		else
 		{
@@ -2302,6 +2373,12 @@ internal sealed class TunnelEngine : IDisposable
 		Dictionary<string, object> dictionary5 = new Dictionary<string, object>();
 		dictionary5.Add("loglevel", "warning");
 		Dictionary<string, object> dictionary6 = dictionary5;
+		string errorLog = PrepareXrayErrorLog(profile);
+		if (errorLog != null)
+		{
+			dictionary6["error"] = errorLog;
+			AppendLog("XRAY_ERROR_LOG name=" + SafeProfileName(profile.Name) + " path=" + errorLog);
+		}
 		if (providerCatalog.Resolve(profile) == null)
 		{
 			string text2 = ProviderTrafficObserver.AccessLogPath(store, profile);
@@ -2319,6 +2396,10 @@ internal sealed class TunnelEngine : IDisposable
 		}
 		dictionary["log"] = dictionary6;
 		EnsureLongIdlePolicy(dictionary);
+		if (profile.TelephonyOptimized && EnsureTelephonyDns(dictionary))
+		{
+			AppendLog("TELEPHONY_DNS name=" + SafeProfileName(profile.Name) + " resolver=system targetStrategy=UseIPv4" );
+		}
 		string text3 = Path.Combine(path, profile.Id + "." + Guid.NewGuid().ToString("N") + ".json");
 		TrackRuntimeFile(text3);
 		string contents;
@@ -2336,6 +2417,64 @@ internal sealed class TunnelEngine : IDisposable
 			DeleteRuntimeFile(text3);
 			throw;
 		}
+	}
+
+	private string PrepareXrayErrorLog(TunnelProfile profile)
+	{
+		try
+		{
+			string directory = Path.Combine(store.StateDirectory, "diagnostics");
+			Directory.CreateDirectory(directory);
+			string path = Path.Combine(directory, profile.Id + ".xray-error.log");
+			if (File.Exists(path) && new FileInfo(path).Length > 10 * 1024 * 1024)
+			{
+				try
+				{
+					string previous = Path.Combine(directory, profile.Id + ".xray-error.previous.log");
+					File.Delete(previous);
+					File.Move(path, previous);
+				}
+				catch (IOException)
+				{
+					AppendLog("XRAY_ERROR_LOG_ROTATION_DEFERRED name=" + SafeProfileName(profile.Name));
+				}
+			}
+			return path;
+		}
+		catch (Exception error)
+		{
+			AppendLog("XRAY_ERROR_LOG_UNAVAILABLE name=" + SafeProfileName(profile.Name) + " reason=" + error.GetType().Name);
+			return null;
+		}
+	}
+
+	internal static bool EnsureTelephonyDns(Dictionary<string, object> root)
+	{
+		if (!root.TryGetValue("outbounds", out var rawOutbounds) || !(rawOutbounds is object[] outbounds))
+		{
+			return false;
+		}
+		var vlessOutbounds = outbounds.OfType<Dictionary<string, object>>()
+			.Where(o => o.TryGetValue("protocol", out var protocol) && string.Equals(protocol as string, "vless", StringComparison.OrdinalIgnoreCase))
+			.ToList();
+		if (vlessOutbounds.Count == 0)
+		{
+			return false;
+		}
+		// Resolve call-service names locally, then carry their current IPv4 address
+		// through the same VPN server. Remote resolver stalls must not delay calls.
+		foreach (var outbound in vlessOutbounds)
+		{
+			outbound["targetStrategy"] = "UseIPv4";
+		}
+		if (!root.TryGetValue("dns", out var rawDns) || !(rawDns is Dictionary<string, object> dns))
+		{
+			dns = new Dictionary<string, object>();
+			root["dns"] = dns;
+		}
+		dns["servers"] = new object[] { "localhost" };
+		dns["queryStrategy"] = "UseIPv4";
+		return true;
 	}
 
 	internal static void EnsureLongIdlePolicy(Dictionary<string, object> root)

@@ -7,5 +7,6 @@ internal enum EngineState
 	TunnelReady,
 	On,
 	Error,
-	Stopping
+	Stopping,
+	Degraded
 }

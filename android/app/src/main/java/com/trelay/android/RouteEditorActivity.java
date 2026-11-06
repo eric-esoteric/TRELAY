@@ -290,7 +290,8 @@ public final class RouteEditorActivity extends Activity {
         if (usable.isEmpty()) { Ui.error(this, "Нет подходящих серверов", new IllegalStateException("Ссылка не содержит серверов, которые умеет запускать TRELAY.")); return; }
         // A single-server SSCONF stays dynamic so the configuration refreshes on every connection.
         if (usable.size() == 1 && Links.scheme(source).equals("ssconf")) { addServers(java.util.Collections.singletonList(source.trim()), usable.get(0)); return; }
-        if (usable.size() == 1) { addServers(usable, null); return; }
+        String subscription = Links.scheme(source).equals("https") ? source.trim() : "";
+        if (usable.size() == 1) { addServers(usable, null, subscription, !subscription.isEmpty()); return; }
         String[] labels = new String[usable.size()];
         boolean[] selected = new boolean[usable.size()];
         int russian = 0;
@@ -308,7 +309,7 @@ public final class RouteEditorActivity extends Activity {
                     List<String> chosen = new ArrayList<>();
                     for (int i = 0; i < usable.size(); i++) if (selected[i]) chosen.add(usable.get(i));
                     if (chosen.isEmpty()) Ui.error(this, "Серверы не выбраны", new IllegalArgumentException("Отметь хотя бы один сервер."));
-                    else addServers(chosen, null);
+                    else addServers(chosen, null, subscription, false);
                 }).show();
     }
 
@@ -319,13 +320,31 @@ public final class RouteEditorActivity extends Activity {
     }
 
     private void addServers(List<String> links, String nameSource) {
-        Set<String> existing = new HashSet<>();
-        for (Model.Server server : route.servers) existing.add(server.link.trim());
+        addServers(links, nameSource, "", false);
+    }
+
+    private void addServers(List<String> links, String nameSource, String subscription, boolean singleServerSubscription) {
         int added = 0;
         for (String link : links) {
-            if (!existing.add(link.trim())) continue;
+            Model.Server existing = null;
+            for (Model.Server server : route.servers) {
+                if (SubscriptionUpdates.connectionKey(server.link).equals(SubscriptionUpdates.connectionKey(link))) {
+                    existing = server;
+                    break;
+                }
+            }
+            if (existing != null) {
+                if (!subscription.isEmpty() && existing.subscription.isEmpty()) {
+                    existing.subscription = subscription;
+                    existing.singleServerSubscription = singleServerSubscription;
+                    added++;
+                }
+                continue;
+            }
             Model.Server server = new Model.Server();
             server.link = link.trim();
+            server.subscription = subscription;
+            server.singleServerSubscription = singleServerSubscription;
             String label = Links.suggestName(nameSource != null ? nameSource : link);
             if (label.isEmpty()) label = Links.kindLabel(link) + " " + (route.servers.size() + 1);
             server.name = label;
@@ -366,6 +385,13 @@ public final class RouteEditorActivity extends Activity {
     private void persist(Set<String> moveHere) {
         try {
             Model.Config fresh = store.load();
+            Model.Route original = config.route(route.id);
+            Model.Route current = fresh.route(route.id);
+            if (original != null && (current == null ||
+                    !original.toJson().toString().equals(current.toJson().toString()))) {
+                Ui.error(this, "Маршрут изменился", new IllegalStateException("Открой редактор заново, чтобы сохранить свежие изменения."));
+                return;
+            }
             for (Model.Route other : fresh.routes) if (!other.id.equals(route.id)) other.packages.removeAll(moveHere);
             boolean replaced = false;
             for (int i = 0; i < fresh.routes.size(); i++)

@@ -194,8 +194,8 @@ internal sealed class SettingsStore
 			}
 		}
 		RecoverVpsDrafts(config);
-		string text = Path.Combine(ApplicationDirectory(), "engine", "xray.exe");
-		if (File.Exists(text) && (!File.Exists(config.XrayPath) || IsNetProxyXray(config.XrayPath) || IsPreviousTrelayEngine(config.XrayPath, "xray.exe")))
+		string text = BundledXrayPath();
+		if (File.Exists(text) && (!File.Exists(config.XrayPath) || IsNetProxyXray(config.XrayPath) || IsPreviousTrelayEngine(config.XrayPath, "xray.exe") || IsPreviousTrelayEngine(config.XrayPath, "trelay-xray.exe")))
 		{
 			config.XrayPath = text;
 		}
@@ -680,7 +680,7 @@ internal sealed class SettingsStore
 		{
 			return appConfig;
 		}
-		string text = Path.Combine(ApplicationDirectory(), "engine", "xray.exe");
+		string text = BundledXrayPath();
 		if (File.Exists(text))
 		{
 			appConfig.XrayPath = text;
@@ -766,5 +766,11 @@ internal sealed class SettingsStore
 	private static string ApplicationDirectory()
 	{
 		return Path.GetDirectoryName(typeof(SettingsStore).Assembly.Location);
+	}
+
+	private static string BundledXrayPath()
+	{
+		string isolated = Path.Combine(ApplicationDirectory(), "engine", "trelay-xray.exe");
+		return File.Exists(isolated) ? isolated : Path.Combine(ApplicationDirectory(), "engine", "xray.exe");
 	}
 }

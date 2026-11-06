@@ -4,7 +4,7 @@
 
 **Выборочная маршрутизация для стабильной телефонии за рубежом**
 
-Windows · Android · Beta 0.3
+Windows · Android · Beta 0.3.2
 
 </div>
 
@@ -35,23 +35,9 @@ Android-версия рекомендуется вместе с **TLINE** — о
 
 Связка не обязательна: TRELAY работает с Zoiper и другими приложениями. Но без прямой интеграции клиент может ждать собственного таймера перерегистрации.
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/images/trelay-android-redacted.png" width="300" alt="TRELAY Android"></td>
-    <td align="center"><img src="docs/images/tline-redacted.png" width="300" alt="TLINE с маршрутом TRELAY"></td>
-  </tr>
-  <tr>
-    <td align="center">TRELAY Android</td>
-    <td align="center">TLINE через TRELAY</td>
-  </tr>
-</table>
-
 ## Скачать
 
-В одном релизе публикуются два файла:
-
-- `TRELAY-Beta-0.3-Windows-x64.zip` — portable-сборка Windows; распакуйте архив целиком и запустите `TRELAY.exe`.
-- `TRELAY-Beta-0.3-Android-arm64.apk` — сборка для современных ARM64-смартфонов.
+Опубликованные сборки доступны в [GitHub Releases](https://github.com/eric-esoteric/TRELAY/releases). Для Windows распакуйте portable-архив целиком и запустите `TRELAY.exe`. Для Android нужен подписанный APK для архитектуры телефона.
 
 Windows-архив нельзя разбирать на отдельные EXE: папка `engine` является частью приложения.
 
@@ -85,7 +71,7 @@ Windows-архив нельзя разбирать на отдельные EXE: 
 .\windows\build.ps1
 ```
 
-Скрипт создаёт `artifacts/TRELAY-Beta-0.3-Windows-x64.zip` и проверяет, что runtime-конфиги и логи не попали в пакет.
+Скрипт создаёт `artifacts/TRELAY-Beta-0.3.2-Windows-x64.zip` и исключает конфиги и логи, созданные при работе приложения.
 
 ### Android
 
@@ -98,7 +84,7 @@ cd android
 
 ## Статус
 
-Beta 0.3 собирается из исходников для обеих платформ. Windows ZIP прошёл изолированный startup/snapshot smoke-тест. Android APK собран, выровнен, подписан совместимым сертификатом предыдущей Beta 0.3 и проверен `apksigner`/`aapt`.
+Beta 0.3.2 обновляет HTTPS-подписки с сохранением работающего маршрута. Если маршрут импортирован в старой версии, привяжите URL подписки заново. Android release APK собирается без подписи.
 
 Реальную SIP-регистрацию, входящий звонок, голос и расход батареи всё равно нужно финально подтвердить на целевом телефоне и у конкретного оператора: эмулятор и успешный запуск движка не заменяют полевой тест.
 
@@ -108,6 +94,5 @@ Beta 0.3 собирается из исходников для обеих пла
 TRELAY/
 ├─ android/       Android-приложение и JVM-тесты
 ├─ windows/       Windows-приложение, движки и скрипт упаковки
-├─ docs/images/   обезличенные скриншоты
 └─ artifacts/     локальные релизные файлы, исключены из Git
 ```

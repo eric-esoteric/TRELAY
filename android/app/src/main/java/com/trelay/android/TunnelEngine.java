@@ -1128,6 +1128,8 @@ final class TunnelEngine {
         long now = System.currentTimeMillis();
         List<String> parts = new ArrayList<>();
         boolean anyStarting = false, anyLost = false;
+        String routerProblem = routerRunning ? null : routerCrashes.size() >= 3
+                ? "VPN-маршрутизатор завершается сразу после запуска" : "VPN-маршрутизатор перезапускается";
         for (Group group : groupOrder) {
             Backend active = group.active;
             int ready = 0, checking = 0, cold = 0;
@@ -1163,11 +1165,12 @@ final class TunnelEngine {
                     text = "«" + safeName(active.name()) + "» не отвечает (" + detail(active) + ")" + (ready == 0 ? ", рабочих резервов нет" : "");
                 }
             }
-            routes.put(group.routeId, new RouteInfo(working, active == null ? null : active.id, text));
+            routes.put(group.routeId, new RouteInfo(working && routerProblem == null,
+                    active == null ? null : active.id, routerProblem == null ? text : routerProblem));
             parts.add(group.label + ": " + text);
         }
         if (!skipped.isEmpty()) parts.add("пропущено: " + String.join("; ", skipped.subList(0, Math.min(2, skipped.size()))) + (skipped.size() > 2 ? " и ещё " + (skipped.size() - 2) : ""));
-        if (!routerRunning) { anyLost = true; parts.add(0, routerCrashes.size() >= 3 ? "VPN-маршрутизатор завершается сразу после запуска" : "VPN-маршрутизатор перезапускается"); }
+        if (routerProblem != null) { anyLost = true; parts.add(0, routerProblem); }
         State next = anyLost ? State.ERROR : anyStarting ? State.STARTING : State.READY;
         String text = parts.isEmpty() ? "Маршруты работают" : String.join(" · ", parts);
         boolean changed;

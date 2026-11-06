@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class TrelayApp extends Application {
-    static final String VERSION = "Beta 0.3";
+    static final String VERSION = "Beta 0.3.2";
     private static volatile boolean initialised;
 
     @Override public void onCreate() {

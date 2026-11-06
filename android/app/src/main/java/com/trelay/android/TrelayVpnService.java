@@ -15,11 +15,13 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.system.OsConstants;
 import java.io.File;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +52,8 @@ public final class TrelayVpnService extends VpnService implements TunnelEngine.L
     private boolean broadcastPending;
     private ConnectivityManager.NetworkCallback networkCallback;
     private volatile boolean stopping;
+    private boolean checkingSubscriptions;
+    private long lastSubscriptionCheck = -1;
 
     static TunnelEngine engine() { TrelayVpnService service = running; return service == null ? null : service.engine; }
 
@@ -92,6 +96,7 @@ public final class TrelayVpnService extends VpnService implements TunnelEngine.L
         if (MANUAL_REFRESH.equals(action) && engine != null) {
             keepAwakeFor(15000);
             engine.manualRefresh();
+            refreshSubscriptions(true);
             SipPeer.reregisterNow(this, config, engine);
             publish();
             return START_STICKY;
@@ -99,6 +104,7 @@ public final class TrelayVpnService extends VpnService implements TunnelEngine.L
         if (Watchdog.ACTION_CHECK.equals(action) && engine != null) {
             // Periodic check from the watchdog alarm: wake the probes and keep the SIP app's picture fresh.
             engine.nudge();
+            refreshSubscriptions(false);
             SipPeer.publish(this, config, engine);
             return START_STICKY;
         }
@@ -127,9 +133,75 @@ public final class TrelayVpnService extends VpnService implements TunnelEngine.L
             EngineLog.write("SERVICE_STARTED " + XrayCore.version());
         }
         engine.start(config);
+        refreshSubscriptions(false);
         Watchdog.schedule(this);
         publish();
         return START_STICKY;
+    }
+
+    private void refreshSubscriptions(boolean manual) {
+        TunnelEngine current = engine;
+        if (current == null || stopping || checkingSubscriptions) return;
+        long now = SystemClock.elapsedRealtime();
+        boolean failed = current.state() == TunnelEngine.State.ERROR;
+        Map<String, TunnelEngine.ServerInfo> status = current.serverInfo();
+        LinkedHashSet<String> sources = new LinkedHashSet<>();
+        for (Model.Route route : config.routes) {
+            if (!route.enabled) continue;
+            for (Model.Server server : route.servers) {
+                if (!server.enabled || server.subscription.isEmpty()) continue;
+                sources.add(server.subscription);
+                TunnelEngine.ServerInfo info = status.get(server.id);
+                if (!server.subscriptionReplacement && info != null &&
+                        (info.status == TunnelEngine.ServerStatus.UNHEALTHY || info.status == TunnelEngine.ServerStatus.DOWN)) failed = true;
+            }
+        }
+        long interval = failed ? 10 * 60_000L : 6 * 60 * 60_000L;
+        if (!manual && lastSubscriptionCheck >= 0 && now - lastSubscriptionCheck < interval) return;
+        if (sources.isEmpty()) return;
+        checkingSubscriptions = true;
+        lastSubscriptionCheck = now;
+        ConfigStore store = new ConfigStore(this);
+        new Thread(() -> {
+            Map<String, List<String>> results = new LinkedHashMap<>();
+            for (String source : sources) {
+                try {
+                    List<String> links = ShareLinkResolver.resolveMany(source, store.subscriptionClientId(false));
+                    List<String> candidates = SubscriptionUpdates.candidates(links);
+                    if (!candidates.isEmpty()) results.put(source, candidates);
+                } catch (Exception error) {
+                    // URLs and resolver messages can contain subscription credentials.
+                    EngineLog.write("SUBSCRIPTION_FETCH_FAILED " + error.getClass().getSimpleName());
+                }
+            }
+            main.post(() -> {
+                checkingSubscriptions = false;
+                if (engine != current || stopping) return;
+                try {
+                    Model.Config fresh = store.load();
+                    int added = 0;
+                    for (Model.Route route : fresh.routes) {
+                        if (!route.enabled) continue;
+                        for (Map.Entry<String, List<String>> result : results.entrySet())
+                            added += SubscriptionUpdates.stage(route, result.getKey(), result.getValue());
+                    }
+                    if (added > 0) {
+                        store.save(fresh);
+                        config = fresh;
+                        current.start(fresh);
+                        sendBroadcast(new Intent(STATE_CHANGED).setPackage(getPackageName()).putExtra("configChanged", true));
+                    }
+                    EngineLog.write("SUBSCRIPTION_CHECK checked=" + sources.size() + " loaded=" + results.size() + " added=" + added);
+                    if (manual) {
+                        String message = added > 0 ? "Новых серверов для проверки: " + added : "Подходящих замен нет";
+                        if (results.size() < sources.size()) message += ". Не все подписки удалось загрузить.";
+                        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show();
+                    }
+                } catch (Exception error) {
+                    EngineLog.write("SUBSCRIPTION_SAVE_FAILED " + error.getClass().getSimpleName());
+                }
+            });
+        }, "trelay-subscriptions").start();
     }
 
     private void startInForeground(String text) {

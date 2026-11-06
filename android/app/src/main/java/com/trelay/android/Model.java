@@ -40,10 +40,16 @@ final class Model {
         String id = newId();
         String name = "Сервер";
         String link = "";
+        String subscription = "";
+        boolean subscriptionReplacement;
+        boolean singleServerSubscription;
         boolean enabled = true;
 
         JSONObject toJson() throws Exception {
-            return new JSONObject().put("id", id).put("name", name).put("link", link).put("enabled", enabled);
+            return new JSONObject().put("id", id).put("name", name).put("link", link)
+                    .put("subscription", subscription).put("subscriptionReplacement", subscriptionReplacement)
+                    .put("singleServerSubscription", singleServerSubscription)
+                    .put("enabled", enabled);
         }
 
         static Server fromJson(JSONObject json) throws Exception {
@@ -51,6 +57,9 @@ final class Model {
             server.id = json.optString("id", newId());
             server.name = json.optString("name", "Сервер");
             server.link = json.getString("link");
+            server.subscription = json.optString("subscription", "");
+            server.subscriptionReplacement = json.optBoolean("subscriptionReplacement", false);
+            server.singleServerSubscription = json.optBoolean("singleServerSubscription", false);
             server.enabled = json.optBoolean("enabled", true);
             return server;
         }

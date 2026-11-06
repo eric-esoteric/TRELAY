@@ -25,9 +25,9 @@ android {
     defaultConfig {
         applicationId 'com.trelay.android'
         minSdk 29
-        targetSdk 35
-        versionCode 3
-        versionName '0.3-beta'
+        targetSdk 36
+        versionCode 5
+        versionName '0.3.2-beta'
         buildConfigField 'String', 'TRELAY_BOOTSTRAP_SECRET', quotedBootstrapSecret
     }
 

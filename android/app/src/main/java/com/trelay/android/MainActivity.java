@@ -45,7 +45,12 @@ public final class MainActivity extends Activity {
     private long lastManualRefresh;
     private String lastSignature = "";
     private final BroadcastReceiver updates = new BroadcastReceiver() {
-        @Override public void onReceive(Context context, Intent intent) { render(false); }
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent.getBooleanExtra("configChanged", false)) {
+                reload();
+                render(true);
+            } else render(false);
+        }
     };
     private final Runnable ticker = new Runnable() {
         @Override public void run() { render(false); handler.postDelayed(this, 1000); }
@@ -106,7 +111,12 @@ public final class MainActivity extends Activity {
         try {
             Intent approval = VpnService.prepare(this);
             if (approval == null) TrelayVpnService.start(this);
-            else startActivityForResult(approval, VPN_REQUEST);
+            else new AlertDialog.Builder(this)
+                    .setTitle("Как TRELAY использует VPN")
+                    .setMessage("TRELAY направляет трафик только выбранных тобой приложений через настроенные тобой VPN-серверы. Остальные приложения используют обычное подключение. Сервер VPN и провайдер подписки могут видеть сетевые данные, необходимые для работы маршрута. VPN не используется для рекламы. Подробнее — в политике конфиденциальности в настройках.\n\nПродолжить к системному запросу на VPN?")
+                    .setNegativeButton("Не сейчас", null)
+                    .setPositiveButton("Продолжить", (dialog, which) -> startActivityForResult(approval, VPN_REQUEST))
+                    .show();
         } catch (Exception error) { Ui.error(this, "Не удалось запросить VPN", error); }
     }
 
@@ -248,7 +258,7 @@ public final class MainActivity extends Activity {
                     lastManualRefresh = now;
                     boolean started = TrelayVpnService.manualRefresh(this);
                     Toast.makeText(this, started
-                            ? "Проверяю все серверы и перерегистрирую TLINE"
+                            ? "Проверяю серверы и обновляю подписки"
                             : "Сначала подключи TRELAY", Toast.LENGTH_SHORT).show();
                     if (started) handler.postDelayed(() -> render(true), 300);
                 }
@@ -407,4 +417,3 @@ public final class MainActivity extends Activity {
         catch (Exception error) { Ui.error(this, "Ярлык не создан", error); }
     }
 }
-

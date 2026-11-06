@@ -5,6 +5,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace TRELAY;
@@ -38,6 +39,9 @@ internal sealed class MainForm : Form
 	private readonly bool enableTray;
 
 	private AppConfig config;
+	private readonly Timer subscriptionTimer = new Timer { Interval = 60_000 };
+	private bool checkingSubscriptions;
+	private DateTime lastSubscriptionCheck;
 
 	private NotifyIcon tray;
 
@@ -101,6 +105,8 @@ internal sealed class MainForm : Form
 		engine.Alert += OnEngineAlert;
 		DpiScaler.Apply(this);
 		RefreshAll();
+		subscriptionTimer.Tick += (_, _) => { if (EngineRunning()) RefreshSubscriptions(false); };
+		if (enableTray) subscriptionTimer.Start();
 		DpiScaler.Center(this);
 	}
 
@@ -167,8 +173,12 @@ internal sealed class MainForm : Form
 		label3.SetBounds(24, 219, 250, 28);
 		base.Controls.Add(label3);
 		Label label4 = Theme.Label("Приоритет сверху вниз · меняйте стрелками", 8.7f, strong: false, Theme.Current.Muted);
-		label4.SetBounds(130, 224, 390, 22);
+		label4.SetBounds(130, 224, 308, 22);
 		base.Controls.Add(label4);
+		RoundedButton refreshSubscriptions = IconButton("Обновить подписки", accent: false);
+		refreshSubscriptions.SetBounds(448, 212, 164, 40);
+		refreshSubscriptions.Click += (_, _) => RefreshSubscriptions(true);
+		base.Controls.Add(refreshSubscriptions);
 		RoundedButton roundedButton2 = IconButton("Добавить", accent: true);
 		roundedButton2.IconKind = ButtonIconKind.Plus;
 		roundedButton2.IconSize = 16;
@@ -675,7 +685,7 @@ internal sealed class MainForm : Form
 	{
 		TunnelProfile broken = null;
 		string issue = "";
-		bool flag = engine.State == EngineState.On || engine.State == EngineState.TunnelReady || engine.State == EngineState.Starting || ValidateProfiles(out issue, out broken);
+		bool flag = engine.State == EngineState.On || engine.State == EngineState.Degraded || engine.State == EngineState.TunnelReady || engine.State == EngineState.Starting || ValidateProfiles(out issue, out broken);
 		if (engine.State == EngineState.On)
 		{
 			issue = "Подключение приложения подтверждено";
@@ -688,9 +698,13 @@ internal sealed class MainForm : Form
 		{
 			issue = "Запускаем маршрут";
 		}
+		else if (engine.State == EngineState.Degraded)
+		{
+			issue = "Состояние приложения и результат проверки маршрута различаются";
+		}
 		validationLabel.Text = (flag ? "✓ " : "! ") + issue;
 		hints.SetToolTip(validationLabel, issue);
-		validationLabel.ForeColor = (flag ? Theme.Current.Success : Theme.Current.Danger);
+		validationLabel.ForeColor = engine.State == EngineState.Degraded ? Theme.Current.Secondary : (flag ? Theme.Current.Success : Theme.Current.Danger);
 		powerButton.Enabled = flag || engine.State != EngineState.Off;
 		if (engine.State == EngineState.Stopping)
 		{
@@ -709,6 +723,12 @@ internal sealed class MainForm : Form
 		else if (engine.State == EngineState.TunnelReady)
 		{
 			stateLabel.Text = "Туннель готов";
+			stateLabel.ForeColor = Theme.Current.Secondary;
+			powerButton.Text = "Отключить";
+		}
+		else if (engine.State == EngineState.Degraded)
+		{
+			stateLabel.Text = "Проверка связи: предупреждение";
 			stateLabel.ForeColor = Theme.Current.Secondary;
 			powerButton.Text = "Отключить";
 		}
@@ -788,6 +808,10 @@ internal sealed class MainForm : Form
 			case ProfileRuntimeStatus.Unhealthy:
 				text = "● не отвечает";
 				foreColor = Theme.Current.Danger;
+				break;
+			case ProfileRuntimeStatus.ServiceUnverified:
+				text = "● сервис не проверен";
+				foreColor = Theme.Current.Secondary;
 				break;
 			case ProfileRuntimeStatus.Skipped:
 				text = "● пропущен";
@@ -1074,6 +1098,92 @@ internal sealed class MainForm : Form
 		return true;
 	}
 
+	private async void RefreshSubscriptions(bool manual)
+	{
+		if (checkingSubscriptions) return;
+		var now = DateTime.UtcNow;
+		var runtime = engine.GetRuntimeInfo();
+		bool failed = engine.State == EngineState.Error || config.Profiles.Any(profile => profile.Enabled &&
+			!profile.SubscriptionReplacement && !string.IsNullOrEmpty(profile.SubscriptionId) &&
+			runtime.TryGetValue(profile.Id, out var info) &&
+			(info.Status == ProfileRuntimeStatus.Unhealthy || info.Status == ProfileRuntimeStatus.Down));
+		var interval = failed ? TimeSpan.FromMinutes(10) : TimeSpan.FromHours(6);
+		if (!manual && now - lastSubscriptionCheck < interval) return;
+		var sources = config.Profiles.Where(profile => profile.Enabled && !string.IsNullOrEmpty(profile.SubscriptionId))
+			.Select(profile => profile.SubscriptionId).Distinct().ToArray();
+		if (sources.Length == 0)
+		{
+			if (manual) MessageBox.Show(this, "Добавь HTTPS-подписку или заново привяжи её к маршруту через редактор.", "TRELAY");
+			return;
+		}
+		checkingSubscriptions = true;
+		lastSubscriptionCheck = now;
+		var additions = new List<TunnelProfile>();
+		bool saved = false;
+		try
+		{
+			var loaded = await Task.Run(() =>
+			{
+				var results = new Dictionary<string, List<string>>();
+				foreach (string source in sources)
+				{
+					try
+					{
+						string url = secrets.Load(source);
+						if (!ShareLinkResolver.ValidateHttpsSubscription(url, out _)) continue;
+						string clientId = secrets.Load("subscription-client-v1");
+						var candidates = SubscriptionUpdates.Candidates(ShareLinkResolver.ResolveMany(url, clientId));
+						if (candidates.Count != 0) results.Add(source, candidates);
+					}
+					catch (Exception error)
+					{
+						System.Diagnostics.Trace.TraceWarning("Subscription download failed: " + error.GetType().Name);
+					}
+				}
+				return results;
+			});
+			if (IsDisposed || Disposing) return;
+			var previous = config.Profiles;
+			var next = previous;
+			foreach (var result in loaded)
+				next = SubscriptionUpdates.Stage(next, result.Key, result.Value, secrets.Load, secrets.Save, additions);
+			if (additions.Count > 0)
+			{
+				config.Profiles = next;
+				try { store.Save(config); }
+				catch { config.Profiles = previous; throw; }
+				saved = true;
+				if (EngineRunning()) engine.Restart(config);
+				RefreshAll();
+			}
+			if (manual)
+			{
+				string message = additions.Count == 0 ? "Подходящих замен нет." : "Новых серверов для проверки: " + additions.Count + ".";
+				if (loaded.Count < sources.Length) message += "\nНе все подписки удалось загрузить.";
+				MessageBox.Show(this, message, "TRELAY");
+			}
+		}
+		catch (Exception error)
+		{
+			System.Diagnostics.Trace.TraceWarning("Subscription update failed: " + error.GetType().Name);
+			if (manual && !IsDisposed && !Disposing)
+				MessageBox.Show(this, saved ? "Список сохранён. Переподключи TRELAY, чтобы применить обновление." :
+					"Обновление не сохранено. Предыдущие маршруты сохранены.", "TRELAY");
+		}
+		finally
+		{
+			checkingSubscriptions = false;
+			if (!saved)
+			{
+				foreach (TunnelProfile addition in additions)
+				{
+					try { secrets.Delete(addition.Id); }
+					catch (Exception error) { System.Diagnostics.Trace.TraceWarning("Subscription cleanup failed: " + error.GetType().Name); }
+				}
+			}
+		}
+	}
+
 	public void CaptureToggleSnapshot(string path)
 	{
 		if (config.Profiles.Count == 0)
@@ -1203,6 +1313,7 @@ internal sealed class MainForm : Form
 			engine.RouteSwitched -= OnRouteSwitched;
 			engine.Alert -= OnEngineAlert;
 			trayRelease.Dispose();
+			subscriptionTimer.Dispose();
 			hints.Dispose();
 			if (tray != null)
 			{

@@ -7,5 +7,6 @@ internal enum ProfileRuntimeStatus
 	Standby,
 	Unhealthy,
 	Down,
-	Skipped
+	Skipped,
+	ServiceUnverified
 }

@@ -9,14 +9,14 @@ $windowsRoot = $PSScriptRoot
 $repoRoot = Split-Path $windowsRoot -Parent
 $project = Join-Path $windowsRoot 'src\TRELAY.csproj'
 $output = Join-Path $windowsRoot "src\bin\$Configuration\net48"
-$package = Join-Path $windowsRoot 'package\TRELAY-Beta-0.3-Windows-x64'
+$package = Join-Path $windowsRoot 'package\TRELAY-Beta-0.3.2-Windows-x64'
 $artifactDirectory = Join-Path $repoRoot 'artifacts'
-$archive = Join-Path $artifactDirectory 'TRELAY-Beta-0.3-Windows-x64.zip'
+$archive = Join-Path $artifactDirectory 'TRELAY-Beta-0.3.2-Windows-x64.zip'
 
 & $DotnetPath restore $project --configfile (Join-Path $repoRoot 'NuGet.Config') --nologo
 if ($LASTEXITCODE -ne 0) { throw 'dotnet restore failed' }
 
-& $DotnetPath build $project -c $Configuration --no-restore --nologo
+& $DotnetPath build $project -c $Configuration --no-restore --nologo '-p:DebugType=none' "-p:PathMap=$windowsRoot=/_/windows"
 if ($LASTEXITCODE -ne 0) { throw 'dotnet build failed' }
 
 if (Test-Path -LiteralPath $package) {
@@ -41,6 +41,7 @@ foreach ($name in @(
 }
 
 Copy-Item -LiteralPath (Join-Path $windowsRoot 'engine') -Destination $package -Recurse
+Copy-Item -LiteralPath (Join-Path $package 'engine\xray.exe') -Destination (Join-Path $package 'engine\trelay-xray.exe') -Force
 Copy-Item -LiteralPath (Join-Path $windowsRoot 'providers') -Destination $package -Recurse
 Copy-Item -LiteralPath (Join-Path $windowsRoot 'README.md') -Destination $package
 Copy-Item -LiteralPath (Join-Path $windowsRoot 'THIRD-PARTY-NOTICES.txt') -Destination $package

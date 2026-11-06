@@ -67,6 +67,10 @@ internal sealed class RouteRelay : IDisposable
 
 		private int backendEndedFirst = -1;
 
+		private string backendEnd = "pending";
+
+		private string clientEnd = "pending";
+
 		private readonly string destination;
 
 		internal readonly RelayTarget Target;
@@ -99,9 +103,9 @@ internal sealed class RouteRelay : IDisposable
 
 		internal string Describe(string group)
 		{
-			string text = (ClosedLocally ? "trelay" : ((backendEndedFirst == 1) ? "server" : ((backendEndedFirst == 0) ? "app" : "?")));
+			string text = (ClosedLocally ? "trelay" : ((backendEndedFirst == 1) ? "upstream" : ((backendEndedFirst == 0) ? "app" : "?")));
 			TimeSpan timeSpan = DateTime.UtcNow - new DateTime(Interlocked.Read(ref lastActivityTicks), DateTimeKind.Utc);
-			return "RELAY_CLOSED group=" + group + " via=" + Target.Name + " dst=" + destination + " closedBy=" + text + " lifetime=" + (int)Lifetime.TotalSeconds + "s idleBeforeClose=" + (int)timeSpan.TotalSeconds + "s up=" + Interlocked.Read(ref fromClient) + " down=" + Interlocked.Read(ref fromBackend);
+			return "RELAY_CLOSED group=" + group + " via=" + Target.Name + " dst=" + destination + " closedBy=" + text + " upstreamEnd=" + backendEnd + " appEnd=" + clientEnd + " lifetime=" + (int)Lifetime.TotalSeconds + "s idleBeforeClose=" + (int)timeSpan.TotalSeconds + "s up=" + Interlocked.Read(ref fromClient) + " down=" + Interlocked.Read(ref fromBackend);
 		}
 
 		internal Task RunAsync()
@@ -114,6 +118,7 @@ internal sealed class RouteRelay : IDisposable
 		private async Task PumpAsync(TcpClient from, TcpClient to, bool fromBackendSide)
 		{
 			byte[] buffer = new byte[32768];
+			string operation = "read";
 			try
 			{
 				NetworkStream source = from.GetStream();
@@ -123,6 +128,7 @@ internal sealed class RouteRelay : IDisposable
 					int read = await source.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(continueOnCapturedContext: false);
 					if (read <= 0)
 					{
+						SetEnd(fromBackendSide, "eof");
 						break;
 					}
 					if (fromBackendSide)
@@ -138,7 +144,9 @@ internal sealed class RouteRelay : IDisposable
 					{
 						Interlocked.Exchange(ref lastInboundTicks, DateTime.UtcNow.Ticks);
 					}
+					operation = "write";
 					await destination.WriteAsync(buffer, 0, read).ConfigureAwait(continueOnCapturedContext: false);
+					operation = "read";
 				}
 				Interlocked.CompareExchange(ref backendEndedFirst, fromBackendSide ? 1 : 0, -1);
 				try
@@ -150,11 +158,26 @@ internal sealed class RouteRelay : IDisposable
 					Close(abort: true);
 				}
 			}
-			catch
+			catch (Exception error)
 			{
+				SetEnd(fromBackendSide, operation + "-" + EndReason(error));
 				Interlocked.CompareExchange(ref backendEndedFirst, fromBackendSide ? 1 : 0, -1);
 				Close(abort: true);
 			}
+		}
+
+		private void SetEnd(bool fromBackendSide, string reason)
+		{
+			if (fromBackendSide)
+				backendEnd = reason;
+			else
+				clientEnd = reason;
+		}
+
+		private static string EndReason(Exception error)
+		{
+			SocketException socket = error as SocketException ?? (error as IOException)?.InnerException as SocketException;
+			return socket != null ? "socket-" + (int)socket.SocketErrorCode : error.GetType().Name;
 		}
 
 		internal void Close(bool abort)

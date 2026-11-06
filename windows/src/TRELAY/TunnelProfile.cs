@@ -31,6 +31,12 @@ public sealed class TunnelProfile
 
 	public int FailoverPriority { get; set; }
 
+	public string SubscriptionId { get; set; }
+
+	public bool SubscriptionReplacement { get; set; }
+
+	public bool SingleServerSubscription { get; set; }
+
 	public List<string> AppNames { get; set; }
 
 	public List<string> AppPaths { get; set; }

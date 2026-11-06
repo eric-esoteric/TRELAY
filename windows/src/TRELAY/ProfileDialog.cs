@@ -454,6 +454,7 @@ internal sealed class ProfileDialog : Form
 			kind = source.KeyKind;
 		}
 		string enteredKey = keyBox.Text.Trim();
+		string subscription = !useFile && enteredKey.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? enteredKey : null;
 		string resolvedSuggestedName = "";
 		bool isSubscription = enteredKey.StartsWith("ssconf://", StringComparison.OrdinalIgnoreCase) || enteredKey.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
 		if (!useFile && isSubscription)
@@ -534,7 +535,7 @@ internal sealed class ProfileDialog : Form
 			{
 				using (ServerSelectionDialog serverSelectionDialog = new ServerSelectionDialog(links))
 				{
-					if (serverSelectionDialog.ShowDialog(this) != DialogResult.OK || !SaveServerGroup(serverSelectionDialog.SelectedServers))
+				if (serverSelectionDialog.ShowDialog(this) != DialogResult.OK || !SaveServerGroup(serverSelectionDialog.SelectedServers, subscription))
 					{
 						return;
 					}
@@ -616,6 +617,11 @@ internal sealed class ProfileDialog : Form
 			XrayConfigPath = (useFile ? fileBox.Text.Trim() : ""),
 			SocksPort = int.Parse(portBox.Text),
 			Enabled = (source == null || source.Enabled),
+			FailoverGroupId = source?.FailoverGroupId ?? "",
+			FailoverPriority = source?.FailoverPriority ?? 0,
+			SubscriptionId = !useFile && !keyChanged ? source?.SubscriptionId : null,
+			SubscriptionReplacement = !useFile && !keyChanged && source?.SubscriptionReplacement == true,
+			SingleServerSubscription = !useFile && !keyChanged && source?.SingleServerSubscription == true,
 			AppNames = appsList.Items.Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
 			AppPaths = (from string x in appsList.Items
 				where appPaths.ContainsKey(x)
@@ -626,6 +632,12 @@ internal sealed class ProfileDialog : Form
 			if (!useFile && (keyChanged || source == null))
 			{
 				secrets.Save(Result.Id, enteredKey);
+			}
+			if (subscription != null)
+			{
+				Result.SubscriptionId = SubscriptionUpdates.SaveSource(secrets, subscription);
+				Result.SubscriptionReplacement = false;
+				Result.SingleServerSubscription = true;
 			}
 		}
 		catch (Exception)
@@ -708,13 +720,15 @@ internal sealed class ProfileDialog : Form
 		return value.All((char c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || char.IsDigit(c) || c == '=' || c == '-');
 	}
 
-	private bool SaveServerGroup(List<ServerCandidate> selected)
+	private bool SaveServerGroup(List<ServerCandidate> selected, string subscription)
 	{
 		List<TunnelProfile> list = new List<TunnelProfile>();
 		string failoverGroupId = Guid.NewGuid().ToString("N");
+		string subscriptionId = null;
 		int num = int.Parse(portBox.Text);
 		try
 		{
+			if (subscription != null) subscriptionId = SubscriptionUpdates.SaveSource(secrets, subscription);
 			for (int i = 0; i < selected.Count; i++)
 			{
 				ServerCandidate serverCandidate = selected[i];
@@ -742,6 +756,7 @@ internal sealed class ProfileDialog : Form
 				tunnelProfile.Enabled = source == null || source.Enabled;
 				tunnelProfile.FailoverGroupId = failoverGroupId;
 				tunnelProfile.FailoverPriority = i;
+				tunnelProfile.SubscriptionId = subscriptionId;
 				tunnelProfile.AppNames = appsList.Items.Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 				tunnelProfile.AppPaths = (from string x in appsList.Items
 					where appPaths.ContainsKey(x)
@@ -753,6 +768,7 @@ internal sealed class ProfileDialog : Form
 		}
 		catch (Exception ex)
 		{
+			if (subscriptionId != null) secrets.Delete(subscriptionId);
 			foreach (TunnelProfile item in list)
 			{
 				secrets.Delete(item.Id);
