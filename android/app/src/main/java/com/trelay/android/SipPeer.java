@@ -98,9 +98,7 @@ final class SipPeer {
 
     private static void send(Context context, Intent intent) {
         try {
-            // Addressed at the receiver itself, so nothing else can pick the signal up. A custom
-            // permission is not used on purpose: Android grants a "normal" permission only to apps
-            // installed after the one that declares it, so TRELAY installed first would go unheard.
+            // Deliver only to TLINE. The receiver requires the shared signing identity.
             // FLAG_INCLUDE_STOPPED_PACKAGES: a SIP client that Android has killed must still hear this.
             intent.setComponent(new ComponentName(PACKAGE, PACKAGE + ".TrelayReceiver"))
                     .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES | Intent.FLAG_RECEIVER_FOREGROUND);
